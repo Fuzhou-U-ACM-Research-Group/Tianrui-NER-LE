@@ -74,9 +74,11 @@ class NERTrainer(ITrainer):
             model_args['pretrained_embeddings'] = self.vocab_embedding
         if 'tag_embedding_file' in args:
             model_args['label_embeddings'] = self.label_embedding
+        if 'inter_knowledge_file' in args:
+            model_args['inter_embeddings'] = self.inter_embedding
         if 'pretrained_file_name' in args:
             model_args['pretrained_file_name'] = args['pretrained_file_name']
-
+        
         self.bert_ner = CCNERModel(**model_args)
         self.model, self.birnncrf = self.bert_ner()
 
@@ -92,6 +94,20 @@ class NERTrainer(ITrainer):
             self.tag_size = self.tag_vocab.__len__()
             self.analysis = CCAnalysis(
                 self.tag_vocab.token2id, self.tag_vocab.id2token)
+
+        # loader about inter_knowledge
+        if self.loader_name == 'le_loader_zl':
+            self.vocab_embedding = result['vocab_embedding']
+            self.embedding_dim = result['embedding_dim']
+            self.inter_embedding = result['inter_embedding']   
+            self.inter_embedding_dim = result['inter_embedding_dim']
+            # print(self.inter_embedding)
+            # print(self.inter_embedding_dim)
+            self.tag_vocab = result['tag_vocab']
+            self.tag_size = self.tag_vocab.__len__()
+            self.analysis = CCAnalysis(
+                self.tag_vocab.token2id, self.tag_vocab.id2token)
+
         if self.loader_name == 'cn_loader':
             self.dm = result['dm']
             self.tag_size = len(self.dm.tag_to_idx)
@@ -131,8 +147,9 @@ class NERTrainer(ITrainer):
             self.eval_set = result['eval_set']
             self.eval_iter = result['eval_iter']
 
-    def train(self, resume_path=False, resume_step=False, lr1=2e-5, lr2=1e-3, eval_call_epoch=None):
-        
+    def train(self, resume_path=False, resume_step=False, lr1=2e-5, lr2=1e-3):
+        alpha = 1e-10
+
         optimizer = optim.AdamW([
             {'params': self.model.parameters(), 'lr': lr1},
             {'params': self.birnncrf.parameters(), 'lr': lr2}
@@ -254,22 +271,16 @@ class NERTrainer(ITrainer):
 
             model_uid = self.save_model(train_step)
             if self.eval_data:
-                if eval_call_epoch is None or eval_call_epoch(epoch):
-                    self.eval()
-                else:
-                    self.analysis.append_eval_record({
-                        'loss': 'skip',
-                        # 'f1': (2 * test_acc * test_recall) / (test_acc + test_recall + alpha),
-                        'f1': 'skip',
-                        'acc': 'skip',
-                        'recall': 'skip'
-                    })
-
+                self.eval()
+            # if epoch == 29:
+            #     self.model.module.save_pretrained(
+            #     './save_pretrained/ontonotes/')
             self.analysis.save_ner_record(
                 uid=current_uid if self.task_name is None else self.task_name)
             yield (epoch + 1, self.analysis.train_record, self.analysis.eval_record, self.analysis.model_record, model_uid)
 
     def eval(self):
+        alpha = 1e-10
 
         test_count = 0
         eval_loss = 0
